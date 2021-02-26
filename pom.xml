@@ -24,6 +24,8 @@
         <!-- JWT 使用 nimbus-jose-jwt 进行解码 -->
         <nimbus-jose-jwt.version>8.16</nimbus-jose-jwt.version>
         <jjwt.version>0.9.0</jjwt.version>
+        <!-- 构建镜像时用于标识 -->
+        <maven.build.timestamp.format>yyyyMMdd</maven.build.timestamp.format>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -109,10 +111,126 @@
         </dependency>
     </dependencies>
     <build>
+        <resources>
+            <!--将resources下的配置文件拷贝到target/config目录下 -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <targetPath>${project.build.directory}/config</targetPath>
+            </resource>
+            <!--编译的时候,类路径下也复制一份配置文件(防止开发启动的时候读取不到配置的情况) -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <targetPath>${project.build.directory}/classes</targetPath>
+            </resource>
+        </resources>
         <plugins>
+            <!-- 将所依赖的第三方jar包打入target下的lib目录 -->
             <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>2.5</version>
+                <executions>
+                    <execution>
+                        <id>copy-dependencies</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- 解决资源文件的编码问题 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <configuration>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+            <!-- 打jar包的main方法配置 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>lib/</classpathPrefix>
+                            <mainClass>com.yy.gateway.GatewayApplication</mainClass>
+                        </manifest>
+                        <!-- 给清单文件添加键值对(配置文件外置) -->
+                        <manifestEntries>
+                            <Class-Path>config/</Class-Path>
+                        </manifestEntries>
+                    </archive>
+                    <!--打包的时候忽略classes 路径下的配置文件 -->
+                    <excludes>
+                        <exclude>**/*.yml</exclude>
+                        <exclude>**/*.xml</exclude>
+                        <exclude>**/*.txt</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <!-- 指定maven编译的jdk版本,如果不指定,maven3默认用jdk 1.5 maven2默认用jdk1.3 -->
+                <configuration>
+                    <source>1.8</source>
+                    <target>1.8</target>
+                </configuration>
+            </plugin>
+            <!-- 使用Maven构建Docker镜像插件 -->
+            <plugin>
+                <groupId>com.spotify</groupId>
+                <artifactId>docker-maven-plugin</artifactId>
+                <version>1.1.0</version>
+                <executions>
+                    <!-- 希望只执行maven clean package 达到 mvn clean package docker:build的效果 -->
+                    <execution>
+                        <id>build-image</id>
+                        <!-- 将插件绑定在package这个phase上。也就是说，只需执行mvn package ，就会自动执行mvn docker:build -->
+                        <phase>package</phase>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- 指定Dockerfile的位置 -->
+                    <dockerDirectory>${project.basedir}/src/main/docker</dockerDirectory>
+                    <!-- registry.eversec.com:5000仓库地址、${project.artifactId}为镜像名称、${project.version}版本号、${maven.build.timestamp}时间标识 -->
+                    <imageName>registry.eversec.com:5000/${project.artifactId}:${project.version}.${maven.build.timestamp}</imageName>
+                    <!-- 打包后上传镜像到该docker服务器,镜像不会上传到私服 -->
+                    <dockerHost>http://192.168.205.232:2375</dockerHost>
+                    <!-- 该应用所依赖的基础镜像，此处为java(需要dockerHost机器上有该基础镜像) -->
+                    <!-- <baseImage>java:8</baseImage> -->
+                    <!-- docker容器启动时执行的命令 -->
+                    <!-- <entryPoint>["java", "-jar","/${project.build.finalName}.jar"]</entryPoint> -->
+                    <resources>
+                        <resource>
+                            <!-- 将打包后的资源文件复制到该目录 -->
+                            <targetPath>/</targetPath>
+                            <!-- 需要复制的文件所在目录，也就是target生成的地址 -->
+                            <directory>${project.build.directory}</directory>
+                            <!-- 需要复制的文件，打包好的应用jar包 -->
+                            <include>${project.build.finalName}.jar</include>
+                        </resource>
+                        <resource>
+                            <targetPath>/</targetPath>
+                            <directory>${project.build.directory}</directory>
+                            <include>lib/</include>
+                        </resource>
+                        <resource>
+                            <targetPath>/</targetPath>
+                            <directory>${project.build.directory}</directory>
+                            <include>config/</include>
+                        </resource>
+                    </resources>
+                </configuration>
             </plugin>
         </plugins>
     </build>
